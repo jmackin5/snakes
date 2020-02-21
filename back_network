@@ -1,0 +1,45 @@
+WITH procedure_claims as
+(
+SELECT
+distinct CLAIM_ID,
+procedure.procedure_raw_code as procedure_code,
+procedure.procedure_primary_display as procedure
+FROM ph_f_procedure procedure
+WHERE
+procedure.procedure_raw_code in ( select procedure_code::varchar from BACK_AND_SPINE_W_SUPER_CLASS where procedure_super_class ilike '%Chiropractic%'
+)
+
+AND SOURCE_DESCRIPTION ILIKE('%cms%')
+AND population_id = 'a69329ea-d5a0-439c-8ef8-aa8b2f816206'
+and year(procedure.SERVICE_start_DATE::date) = 2018
+--group by claim_id
+), net as (
+SELECT
+distinct ISNULL(billing_organization_tax_id, billing_organization_source_id) as billing
+---,MAX(oto.prov_lname) as provider_organization
+,(CASE WHEN prov_lname is null THEN 'Out of Network' ELSE 'In Network' END) as network
+,count(distinct(claim.empi_id)) as Number_of_Patients
+,count(distinct(claim.claim_id)) as Number_of_Claims
+,sum(TOTAL_PAID_CHARGE) as paid_Amount
+,sum(TOTAL_PAID_CHARGE)/ count(distinct(claim.claim_id)) as Avg_Paid_per_Claim
+,sum(TOTAL_PAID_CHARGE)/ count(distinct(claim.empi_id)) as Avg_Paid_per_Patient
+,count(distinct(claim.claim_id))/ count(distinct(claim.empi_id)) as Per_Patient_Utilization
+from ph_f_annotated_claim claim
+INNER JOIN procedure_claims on CLAIM.CLAIM_ID = procedure_claims.claim_id
+INNER JOIN BACK_AND_SPINE_W_SUPER_CLASS b on b.procedure_code = procedure_claims.procedure_code
+LEFT JOIN OPA_FACILITY_TIN_CROSSWALK oto on oto.prov_tin = claim.billing_organization_tax_id or oto.prov_npi = claim.billing_organization_source_id
+WHERE SOURCE_DESCRIPTION ILIKE('%cms%')
+group by 1,prov_lname,billing_organization_source_id
+order by paid_amount DESC)
+,fin as (
+select distinct billing, network,Number_of_Claims, min(paid_amount) as paid_amount from net
+group by 1,2,3
+order by billing desc)
+
+select
+'Chiropractic' as procedure_type
+,network
+,sum(Number_of_Claims) as num_of_claims
+,sum(paid_amount)
+from fin
+group by 1,2
